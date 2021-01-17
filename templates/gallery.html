@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta http-equiv=Content-Type content="text/html; charset=utf-8">
+    <link rel="stylesheet" href="assets/style.css">
+</head>
+
+<body>
+    <div class="outer">
+        <div class="flex-container">
+            {{range $i, $c := .DivContent}}
+            <div class="flex-item">{{$c}}</div>
+            {{end}}
+        </div>
+    </div>
+</body>
+
+<script src="assets/main.js"></script>
+
+</html>
