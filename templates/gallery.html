@@ -7,15 +7,16 @@
 </head>
 
 <body>
+    <script src="assets/main.js"></script>
+    <div class="focus" onclick="hideZoom()"></div>
     <div class="outer">
         <div class="flex-container">
             {{range $i, $c := .DivContent}}
-            <div style="background-image: url('{{$c}}');" class="flex-item"></div>
+            <div style="background-image: url('{{$c}}');" class="flex-item" onclick="zoomImg('{{$c}}')"></div>
             {{end}}
         </div>
     </div>
 </body>
 
-<script src="assets/main.js"></script>
 
 </html>

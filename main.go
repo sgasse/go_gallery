@@ -14,52 +14,74 @@ import (
 )
 
 var (
-	port = flag.Int("port", 3353, "Port to listen on")
-	dir  = flag.String("dir", "./", "Directory for which to look for images")
-	rows = flag.Int("rows", 3, "Number of rows in gallery view")
-	cols = flag.Int("cols", 3, "Number of columns in gallery view")
+	port     = flag.Int("port", 3353, "Port to listen on")
+	dir      = flag.String("dir", "./", "Directory for which to look for images")
+	rows     = flag.Int("rows", 3, "Number of rows in gallery view")
+	cols     = flag.Int("cols", 3, "Number of columns in gallery view")
+	prefetch = flag.Int("prefetch", 3, "Number of rows to prefetch above and below")
 )
 
+// imgs contains the paths to image files recursively found in `dir`.
 var imgs []string
 
+// restData is the JSON-formatted response send to the JS callback.
 type restData struct {
 	GalleryContent string `json:"GalleryContent"`
-	LastRow        bool   `json:"LastRow"`
 }
 
+// tplData contains the fields used in templating the HTML views.
 type tplData struct {
 	DivContent []string
 }
 
-func getImgData(firstRow int) tplData {
-	startIdx := *cols * firstRow
-	endIdx := startIdx + *cols*(*rows+2)
-
-	if endIdx < len(imgs) {
-		return tplData{imgs[startIdx:endIdx]}
-	}
-
-	imgPaths := imgs[startIdx:]
-	remainder := make([]string, len(imgs)-endIdx)
-	imgPaths = append(imgPaths, remainder...)
-
-	return tplData{imgPaths}
+// jsReq is the JSON-formatted request data from the JS callback.
+type jsReq struct {
+	FirstRow int `json:"FirstRow"`
 }
 
-func getDivNums(rowOffset int) tplData {
-	dummyContent := make([]string, 15)
-	for ind := range dummyContent {
-		dummyContent[ind] = strconv.Itoa(ind + 1 + rowOffset*3)
+func parseImgs(inPath string) []string {
+	var imgPaths []string
+
+	selectImgs := func(path string, info os.FileInfo, err error) error {
+		if err == nil {
+			if strings.HasSuffix(path, ".jpg") || strings.HasSuffix(path, ".jpeg") || strings.HasSuffix(path, ".png") {
+				imgPaths = append(imgPaths, "imgs/"+strings.TrimPrefix(path, *dir))
+			}
+		}
+		return nil
 	}
 
-	dm := tplData{DivContent: dummyContent}
-	return dm
+	err := filepath.Walk(inPath, selectImgs)
+	if err != nil {
+		log.Fatal(err)
+	}
+	return imgPaths
 }
 
-func tmpGetHtmContent(rowOffset int) []byte {
+// maskImgView creates a img path array with all images not in view or the prefetch areas masked out.
+func maskImgView(firstRow int) tplData {
+	startIdx := 0
+	endIdx := (firstRow + *rows + *prefetch) * *cols
+
+	if firstRow >= *prefetch {
+		startIdx = (firstRow - *prefetch) * *cols
+	}
+
+	if endIdx > len(imgs) {
+		endIdx = len(imgs)
+	}
+
+	maskedImgs := make([]string, startIdx)
+	maskedImgs = append(maskedImgs, imgs[startIdx:endIdx]...)
+	maskedImgs = append(maskedImgs, make([]string, len(imgs)-endIdx)...)
+
+	return tplData{maskedImgs}
+}
+
+func getGalleryHTML(rowOffset int) []byte {
 	t, _ := template.ParseFiles("templates/galleryContent.html")
 
-	dm := getImgData(rowOffset)
+	dm := maskImgView(rowOffset)
 
 	var tplOut bytes.Buffer
 	if err := t.Execute(&tplOut, dm); err != nil {
@@ -69,43 +91,16 @@ func tmpGetHtmContent(rowOffset int) []byte {
 	return tplOut.Bytes()
 }
 
-func galleryHandler(w http.ResponseWriter, r *http.Request) {
-	t, _ := template.ParseFiles("templates/gallery.html")
-	dm := getImgData(0)
-	t.Execute(w, dm)
-}
-
-type clientCall struct {
-	FirstRow int `json:"FirstRow"`
-}
-
-func getImages(inPath string) []string {
-	var imgPaths []string
-	appendFile := func(path string, info os.FileInfo, err error) error {
-		if err == nil {
-			if strings.HasSuffix(path, ".jpg") || strings.HasSuffix(path, ".jpeg") || strings.HasSuffix(path, ".png") {
-				imgPaths = append(imgPaths, "imgs/"+strings.TrimPrefix(path, *dir))
-			}
-		}
-		return nil
-	}
-	err := filepath.Walk(inPath, appendFile)
-	if err != nil {
-		log.Fatal(err)
-	}
-	return imgPaths
-}
-
 func restGalleryHandler(w http.ResponseWriter, r *http.Request) {
-	var cCall clientCall
-	err := json.NewDecoder(r.Body).Decode(&cCall)
+	var req jsReq
+	err := json.NewDecoder(r.Body).Decode(&req)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	htmlBody := tmpGetHtmContent(cCall.FirstRow)
-	rData := restData{GalleryContent: string(htmlBody), LastRow: false}
+	htmlBody := getGalleryHTML(req.FirstRow)
+	rData := restData{GalleryContent: string(htmlBody)}
 
 	jBody, err := json.MarshalIndent(rData, "", "    ")
 	if err != nil {
@@ -116,23 +111,25 @@ func restGalleryHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write(jBody)
 }
 
+func galleryHandler(w http.ResponseWriter, r *http.Request) {
+	t, _ := template.ParseFiles("templates/gallery.html")
+	dm := maskImgView(0)
+	t.Execute(w, dm)
+}
+
 func main() {
 	flag.Parse()
 
-	imgs = getImages(*dir)
-	log.Println("Length of imgs: ", len(imgs))
-	remainder := make([]string, *cols-(len(imgs)%*cols))
-	imgs = append(imgs, remainder...)
-	log.Println("Length of imgs: ", len(imgs))
+	imgs = parseImgs(*dir)
 
 	mux := http.NewServeMux()
-	fs := http.FileServer(http.Dir("assets"))
 
+	fs := http.FileServer(http.Dir("assets"))
 	imgFs := http.FileServer(http.Dir(*dir))
 
 	mux.HandleFunc("/gallery", galleryHandler)
 	mux.HandleFunc("/restGallery", restGalleryHandler)
 	mux.Handle("/assets/", http.StripPrefix("/assets/", fs))
 	mux.Handle("/imgs/", http.StripPrefix("/imgs/", imgFs))
-	http.ListenAndServe(":"+strconv.Itoa(*port), mux)
+	http.ListenAndServe("127.0.0.1:"+strconv.Itoa(*port), mux)
 }
