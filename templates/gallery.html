@@ -10,7 +10,7 @@
     <div class="outer">
         <div class="flex-container">
             {{range $i, $c := .DivContent}}
-            <div class="flex-item">{{$c}}</div>
+            <div style="background-image: url('{{$c}}');" class="flex-item"></div>
             {{end}}
         </div>
     </div>

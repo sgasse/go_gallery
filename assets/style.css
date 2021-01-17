@@ -160,21 +160,23 @@ table {
     margin: 0;
     list-style: none;
     position: fixed;
-    top: -100px;
     transition: top 0.1s;
 }
 
 .flex-item {
-    background: tomato;
+    background: black;
     padding: 5px;
-    width: 31vw;
-    height: 31vh;
-    margin-top: 5px;
+    width: 32vw;
+    height: 33vh;
+    margin: 1px;
     line-height: 150px;
     color: white;
     font-weight: bold;
     font-size: 3em;
     text-align: center;
+    overflow: hidden;
+    background-size: cover;
+    background-position: center;
 }
 
 .notransition {

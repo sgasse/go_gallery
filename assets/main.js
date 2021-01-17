@@ -1,4 +1,4 @@
-var scrollFactor = 15;
+var scrollFactor = 1;
 var galleryView = document.querySelector('.flex-container');
 
 var firstRow = 0;
