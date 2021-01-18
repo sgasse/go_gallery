@@ -5,20 +5,23 @@ import (
 	"encoding/json"
 	"flag"
 	"log"
+	"math/rand"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"text/template"
+	"time"
 )
 
 var (
-	port     = flag.Int("port", 3353, "Port to listen on")
-	dir      = flag.String("dir", "./", "Directory for which to look for images")
-	rows     = flag.Int("rows", 3, "Number of rows in gallery view")
-	cols     = flag.Int("cols", 3, "Number of columns in gallery view")
-	prefetch = flag.Int("prefetch", 3, "Number of rows to prefetch above and below")
+	port      = flag.Int("port", 3353, "Port to listen on")
+	dir       = flag.String("dir", "./", "Directory for which to look for images")
+	rows      = flag.Int("rows", 3, "Number of rows in gallery view")
+	cols      = flag.Int("cols", 3, "Number of columns in gallery view")
+	prefetch  = flag.Int("prefetch", 3, "Number of rows to prefetch above and below")
+	randomize = flag.Bool("randomize", false, "Random shuffle images")
 )
 
 // imgs contains the paths to image files recursively found in `dir`.
@@ -81,10 +84,10 @@ func maskImgView(firstRow int) tplData {
 func getGalleryHTML(rowOffset int) []byte {
 	t, _ := template.ParseFiles("templates/galleryContent.html")
 
-	dm := maskImgView(rowOffset)
+	data := maskImgView(rowOffset)
 
 	var tplOut bytes.Buffer
-	if err := t.Execute(&tplOut, dm); err != nil {
+	if err := t.Execute(&tplOut, data); err != nil {
 		log.Fatal(err)
 	}
 
@@ -104,6 +107,7 @@ func restGalleryHandler(w http.ResponseWriter, r *http.Request) {
 
 	jBody, err := json.MarshalIndent(rData, "", "    ")
 	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		log.Fatal(err)
 	}
 
@@ -113,14 +117,23 @@ func restGalleryHandler(w http.ResponseWriter, r *http.Request) {
 
 func galleryHandler(w http.ResponseWriter, r *http.Request) {
 	t, _ := template.ParseFiles("templates/gallery.html")
-	dm := maskImgView(0)
-	t.Execute(w, dm)
+	data := maskImgView(0)
+	t.Execute(w, data)
+}
+
+func randomizeData(data []string) []string {
+	rand.Seed(time.Now().UnixNano())
+	rand.Shuffle(len(data), func(i, j int) { data[i], data[j] = data[j], data[i] })
+	return data
 }
 
 func main() {
 	flag.Parse()
 
 	imgs = parseImgs(*dir)
+	if *randomize {
+		imgs = randomizeData(imgs)
+	}
 
 	mux := http.NewServeMux()
 
