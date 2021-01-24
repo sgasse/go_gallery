@@ -1,3 +1,3 @@
-{{range $i, $c := .DivContent}}
-<div style="background-image: url('{{$c}}');" class="flex-item" onclick="zoomImg('{{$c}}')"></div>
+{{range $i, $c := .Images}}
+<div style="background-image: url('{{$c.ThumbPath}}');" class="flex-item" onclick="zoomImg('{{$c.ServerPath}}')"></div>
 {{end}}

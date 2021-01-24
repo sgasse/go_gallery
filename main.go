@@ -26,16 +26,16 @@ var (
 	randomize = flag.Bool("randomize", false, "Random shuffle images")
 )
 
-type convTask struct {
-	nameTarget *string
-	file       *string
+type galleryImg struct {
+	AbsPath    string
+	ServerPath string
+	ThumbPath  string
 }
 
-// paths to image files recursively found in `dir`, including absolute, relative and thumbnail paths.
-var absImgs, imgs, thumbs []string
+var imgs []galleryImg
 
 var thumbDir string
-var convChan chan convTask
+var convChan chan *galleryImg
 
 // restData is the JSON-formatted response send to the JS callback.
 type restData struct {
@@ -44,7 +44,7 @@ type restData struct {
 
 // tplData contains the fields used in templating the HTML views.
 type tplData struct {
-	DivContent []string
+	Images []galleryImg
 }
 
 // jsReq is the JSON-formatted request data from the JS callback.
@@ -58,7 +58,7 @@ func createPreview(file, outdir string) (outfile string, err error) {
 		return
 	}
 
-	newImage, err := bimg.NewImage(buffer).Resize(800, 600)
+	newImage, err := bimg.NewImage(buffer).Resize(0, 800)
 	if err != nil {
 		return
 	}
@@ -69,12 +69,18 @@ func createPreview(file, outdir string) (outfile string, err error) {
 	return
 }
 
-func parseImgs(inPath string) (absPaths, imgPaths []string) {
+func randomizeData(data []galleryImg) []galleryImg {
+	rand.Seed(time.Now().UnixNano())
+	rand.Shuffle(len(data), func(i, j int) { data[i], data[j] = data[j], data[i] })
+	return data
+}
+
+func parseImgs(inPath string, randomize bool) (parsedImgs []galleryImg) {
 	selectImgs := func(path string, info os.FileInfo, err error) error {
 		if err == nil {
 			if strings.HasSuffix(path, ".jpg") || strings.HasSuffix(path, ".jpeg") || strings.HasSuffix(path, ".png") {
-				absPaths = append(absPaths, path)
-				imgPaths = append(imgPaths, "imgs/"+strings.TrimPrefix(path, *dir))
+				im := galleryImg{AbsPath: path, ServerPath: "imgs/" + strings.TrimPrefix(path, *dir)}
+				parsedImgs = append(parsedImgs, im)
 			}
 		}
 		return nil
@@ -84,7 +90,12 @@ func parseImgs(inPath string) (absPaths, imgPaths []string) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	return absPaths, imgPaths
+
+	if randomize {
+		parsedImgs = randomizeData(parsedImgs)
+	}
+
+	return parsedImgs
 }
 
 func getMaskInds(firstRow, prefetch int) (startIdx, endIdx int) {
@@ -101,15 +112,15 @@ func getMaskInds(firstRow, prefetch int) (startIdx, endIdx int) {
 	return
 }
 
-// maskImgView creates a img path array with all images not in view or the prefetch areas masked out.
 func maskImgView(firstRow int) tplData {
 	startIdx, endIdx := getMaskInds(firstRow, *prefetch)
 
-	maskedImgs := make([]string, startIdx)
+	maskedImgs := make([]galleryImg, startIdx)
 	maskedImgs = append(maskedImgs, imgs[startIdx:endIdx]...)
-	maskedImgs = append(maskedImgs, make([]string, len(imgs)-endIdx)...)
+	maskedImgs = append(maskedImgs, make([]galleryImg, len(imgs)-endIdx)...)
 
 	return tplData{maskedImgs}
+
 }
 
 func getGalleryHTML(rowOffset int) []byte {
@@ -148,68 +159,62 @@ func restGalleryHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func galleryHandler(w http.ResponseWriter, r *http.Request) {
-	t, _ := template.ParseFiles("templates/gallery.html")
+	t, parseErr := template.ParseFiles("templates/gallery.html")
+	if parseErr != nil {
+		log.Fatal(parseErr)
+	}
 	data := maskImgView(0)
 	t.Execute(w, data)
 }
 
-func randomizeData(arr1, arr2 []string) ([]string, []string) {
-	rand.Seed(time.Now().UnixNano())
-	rand.Shuffle(len(arr1), func(i, j int) {
-		arr1[i], arr1[j] = arr1[j], arr1[i]
-		arr2[i], arr2[j] = arr2[j], arr2[i]
-	})
-	return arr1, arr2
-}
-
-func findToThumbnail(firstRow int, toConv chan<- convTask) {
+func findToThumbnail(firstRow int, toConv chan<- *galleryImg) {
 	startIdx, endIdx := getMaskInds(firstRow, *prefetch+2)
 	for i := startIdx; i < endIdx; i++ {
-		if thumbs[i] == "" {
-			toConv <- convTask{&thumbs[i], &absImgs[i]}
+		if imgs[i].ThumbPath == "" {
+			toConv <- &imgs[i]
 		}
 	}
 }
 
-func thumbnailImgs(toConv <-chan convTask) {
+func thumbnailImgs(toConv <-chan *galleryImg) {
 	for {
-		task := <-toConv
-		outfile, err := createPreview(*task.file, thumbDir)
+		im := <-toConv
+		outfile, err := createPreview(im.AbsPath, thumbDir)
 		if err != nil {
 			log.Fatal(err)
 		}
 
-		*task.nameTarget = outfile
+		im.ThumbPath = "thumbs/" + filepath.Base(outfile)
 	}
 }
 
 func main() {
 	flag.Parse()
 
-	absImgs, imgs = parseImgs(*dir)
-	if *randomize {
-		absImgs, imgs = randomizeData(absImgs, imgs)
-	}
-	thumbs = make([]string, len(absImgs))
+	os.Setenv("VIPS_WARNING", "0")
+
+	imgs = parseImgs(*dir, *randomize)
 
 	thumbDir = "/tmp/goGalleryThumbs"
-	err := os.Mkdir(thumbDir, 0755)
+	err := os.MkdirAll(thumbDir, 0755)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	convChan = make(chan convTask, 8)
+	convChan = make(chan *galleryImg, 8)
 	go findToThumbnail(0, convChan)
 	go thumbnailImgs(convChan)
 
 	mux := http.NewServeMux()
 
 	fs := http.FileServer(http.Dir("assets"))
-	imgFs := http.FileServer(http.Dir(*dir))
+	fullResFs := http.FileServer(http.Dir(*dir))
+	thumbsFs := http.FileServer(http.Dir(thumbDir))
 
 	mux.HandleFunc("/gallery", galleryHandler)
 	mux.HandleFunc("/restGallery", restGalleryHandler)
 	mux.Handle("/assets/", http.StripPrefix("/assets/", fs))
-	mux.Handle("/imgs/", http.StripPrefix("/imgs/", imgFs))
+	mux.Handle("/imgs/", http.StripPrefix("/imgs/", fullResFs))
+	mux.Handle("/thumbs/", http.StripPrefix("/thumbs/", thumbsFs))
 	http.ListenAndServe("127.0.0.1:"+strconv.Itoa(*port), mux)
 }
