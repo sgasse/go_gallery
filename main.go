@@ -8,9 +8,12 @@ import (
 	"math/rand"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 	"text/template"
 	"time"
 
@@ -18,12 +21,13 @@ import (
 )
 
 var (
-	port      = flag.Int("port", 3353, "Port to listen on")
-	dir       = flag.String("dir", "./", "Directory for which to look for images")
-	rows      = flag.Int("rows", 3, "Number of rows in gallery view")
-	cols      = flag.Int("cols", 3, "Number of columns in gallery view")
-	prefetch  = flag.Int("prefetch", 3, "Number of rows to prefetch above and below")
-	randomize = flag.Bool("randomize", false, "Random shuffle images")
+	port       = flag.Int("port", 3353, "Port to listen on")
+	dir        = flag.String("dir", "./", "Directory for which to look for images")
+	rows       = flag.Int("rows", 3, "Number of rows in gallery view")
+	cols       = flag.Int("cols", 3, "Number of columns in gallery view")
+	prefetch   = flag.Int("prefetch", 3, "Number of rows to prefetch above and below")
+	randomize  = flag.Bool("randomize", false, "Random shuffle images")
+	numWorkers = flag.Int("numWorkers", 4, "Number of resize worker routines")
 )
 
 type galleryImg struct {
@@ -36,6 +40,7 @@ var imgs []galleryImg
 
 var thumbDir string
 var convChan chan *galleryImg
+var wg sync.WaitGroup
 
 // restData is the JSON-formatted response send to the JS callback.
 type restData struct {
@@ -144,7 +149,8 @@ func restGalleryHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go findToThumbnail(req.FirstRow, convChan)
+	findToThumbnail(req.FirstRow, convChan)
+	wg.Wait()
 	htmlBody := getGalleryHTML(req.FirstRow)
 	rData := restData{GalleryContent: string(htmlBody)}
 
@@ -171,6 +177,7 @@ func findToThumbnail(firstRow int, toConv chan<- *galleryImg) {
 	startIdx, endIdx := getMaskInds(firstRow, *prefetch+2)
 	for i := startIdx; i < endIdx; i++ {
 		if imgs[i].ThumbPath == "" {
+			wg.Add(1)
 			toConv <- &imgs[i]
 		}
 	}
@@ -185,13 +192,25 @@ func thumbnailImgs(toConv <-chan *galleryImg) {
 		}
 
 		im.ThumbPath = "thumbs/" + filepath.Base(outfile)
+		wg.Done()
 	}
+}
+
+func shutdown(sigChan chan os.Signal, thumbsDir string) {
+	<-sigChan
+	log.Println("Received SIGINT/SIGTERM, removing thumbnail directory ", thumbsDir)
+	os.RemoveAll(thumbsDir)
+	os.Exit(0)
 }
 
 func main() {
 	flag.Parse()
 
 	os.Setenv("VIPS_WARNING", "0")
+
+	// catch shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	imgs = parseImgs(*dir, *randomize)
 
@@ -200,10 +219,14 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	go shutdown(sigChan, thumbDir)
 
-	convChan = make(chan *galleryImg, 8)
+	chanSize := (2*(*prefetch) + *rows) * (*cols)
+	convChan = make(chan *galleryImg, chanSize)
 	go findToThumbnail(0, convChan)
-	go thumbnailImgs(convChan)
+	for i := 0; i < *numWorkers; i++ {
+		go thumbnailImgs(convChan)
+	}
 
 	mux := http.NewServeMux()
 
