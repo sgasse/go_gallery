@@ -169,8 +169,8 @@ func galleryHandler(w http.ResponseWriter, r *http.Request) {
 	if parseErr != nil {
 		log.Fatal(parseErr)
 	}
-	data := maskImgView(0)
-	t.Execute(w, data)
+	content := string(getGalleryHTML(0))
+	t.Execute(w, content)
 }
 
 func findToThumbnail(firstRow int, toConv chan<- *galleryImg) {

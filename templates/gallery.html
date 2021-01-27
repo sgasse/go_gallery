@@ -11,9 +11,7 @@
     <div class="focus" onclick="hideZoom()"></div>
     <div class="outer">
         <div class="flex-container">
-            {{range $i, $c := .Images}}
-            <div style="background-image: url('{{$c.ThumbPath}}');" class="flex-item" onclick="zoomImg('{{$c.ServerPath}}')"></div>
-            {{end}}
+            {{.}}
         </div>
     </div>
 </body>
