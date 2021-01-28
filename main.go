@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"log"
 	"math/rand"
 	"net/http"
@@ -49,7 +50,10 @@ type restData struct {
 
 // tplData contains the fields used in templating the HTML views.
 type tplData struct {
-	Images []galleryImg
+	Images     []galleryImg
+	ItemWidth  string
+	ItemHeight string
+	ItemMargin string
 }
 
 // jsReq is the JSON-formatted request data from the JS callback.
@@ -117,6 +121,13 @@ func getMaskInds(firstRow, prefetch int) (startIdx, endIdx int) {
 	return
 }
 
+func getHwmStyle() (w, h, m string) {
+	w = fmt.Sprintf("%.2f", 99.0/float32(*cols))
+	h = fmt.Sprintf("%.2f", 99.0/float32(*rows))
+	m = fmt.Sprintf("%.2f", 1.0/(2*float32(*cols)))
+	return w, h, m
+}
+
 func maskImgView(firstRow int) tplData {
 	startIdx, endIdx := getMaskInds(firstRow, *prefetch)
 
@@ -124,7 +135,9 @@ func maskImgView(firstRow int) tplData {
 	maskedImgs = append(maskedImgs, imgs[startIdx:endIdx]...)
 	maskedImgs = append(maskedImgs, make([]galleryImg, len(imgs)-endIdx)...)
 
-	return tplData{maskedImgs}
+	w, h, m := getHwmStyle()
+
+	return tplData{Images: maskedImgs, ItemWidth: w, ItemHeight: h, ItemMargin: m}
 
 }
 

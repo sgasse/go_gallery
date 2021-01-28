@@ -1,3 +1,7 @@
 {{range $i, $c := .Images}}
-<div style="background-image: url('{{$c.ThumbPath}}');" class="flex-item" onclick="zoomImg('{{$c.ServerPath}}')"></div>
+<div style="background-image: url('{{$c.ThumbPath}}');
+            min-width: {{$.ItemWidth}}%;
+            height: {{$.ItemHeight}}vh;
+            margin: {{$.ItemMargin}}%;" class="flex-item" onclick="zoomImg('{{$c.ServerPath}}')">
+</div>
 {{end}}
