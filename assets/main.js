@@ -1,5 +1,6 @@
 var last_scroll = 0;
 var firstRow = 0;
+var debounceRows = 2;
 
 function zoomImg(img) {
     console.log("Zooming in on ", img);
@@ -29,6 +30,7 @@ const fetchImgData = (firstRow) =>
 function handleSrvResp(resp) {
     var galleryView = document.querySelector('.flex-container');
     galleryView.innerHTML = resp.GalleryContent;
+    debounceRows = resp.DebounceRows;
     console.log('Image data updated for top row ', firstRow)
 }
 
@@ -42,7 +44,7 @@ function imgHeight() {
 
 document.addEventListener('scroll', function(e) {
     var elemHeight = imgHeight();
-    if (Math.abs(last_scroll - window.scrollY) > 2 * elemHeight) {
+    if (Math.abs(last_scroll - window.scrollY) > debounceRows * elemHeight) {
         last_scroll = window.scrollY;
         firstRow = Math.floor(window.scrollY / elemHeight);
         fetchImgData(firstRow).then(handleSrvResp);

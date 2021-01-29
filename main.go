@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math"
 	"math/rand"
 	"net/http"
 	"os"
@@ -26,7 +27,6 @@ var (
 	dir        = flag.String("dir", "./", "Directory for which to look for images")
 	rows       = flag.Int("rows", 3, "Number of rows in gallery view")
 	cols       = flag.Int("cols", 3, "Number of columns in gallery view")
-	prefetch   = flag.Int("prefetch", 3, "Number of rows to prefetch above and below")
 	randomize  = flag.Bool("randomize", false, "Random shuffle images")
 	numWorkers = flag.Int("numWorkers", 4, "Number of resize worker routines")
 )
@@ -46,14 +46,16 @@ var wg sync.WaitGroup
 // restData is the JSON-formatted response send to the JS callback.
 type restData struct {
 	GalleryContent string `json:"GalleryContent"`
+	DebounceRows   int    `json:"DebounceRows"`
 }
 
 // tplData contains the fields used in templating the HTML views.
 type tplData struct {
-	Images     []galleryImg
-	ItemWidth  string
-	ItemHeight string
-	ItemMargin string
+	Images          []galleryImg
+	ItemWidth       string
+	ItemHeight      string
+	ItemMarginHoriz string
+	ItemMarginVert  string
 }
 
 // jsReq is the JSON-formatted request data from the JS callback.
@@ -121,23 +123,26 @@ func getMaskInds(firstRow, prefetch int) (startIdx, endIdx int) {
 	return
 }
 
-func getHwmStyle() (w, h, m string) {
+func getHwmStyle() (w, h, mv, mh string) {
 	w = fmt.Sprintf("%.2f", 99.0/float32(*cols))
 	h = fmt.Sprintf("%.2f", 99.0/float32(*rows))
-	m = fmt.Sprintf("%.2f", 1.0/(2*float32(*cols)))
-	return w, h, m
+	mv = fmt.Sprintf("%.2f", 1.0/(2*float32(*rows)))
+	mh = fmt.Sprintf("%.2f", 1.0/(2*float32(*cols)))
+	return w, h, mv, mh
 }
 
 func maskImgView(firstRow int) tplData {
-	startIdx, endIdx := getMaskInds(firstRow, *prefetch)
+	// Prefetch one complete screen above and below
+	startIdx, endIdx := getMaskInds(firstRow, *rows)
 
 	maskedImgs := make([]galleryImg, startIdx)
 	maskedImgs = append(maskedImgs, imgs[startIdx:endIdx]...)
 	maskedImgs = append(maskedImgs, make([]galleryImg, len(imgs)-endIdx)...)
 
-	w, h, m := getHwmStyle()
+	w, h, mv, mh := getHwmStyle()
 
-	return tplData{Images: maskedImgs, ItemWidth: w, ItemHeight: h, ItemMargin: m}
+	return tplData{Images: maskedImgs, ItemWidth: w, ItemHeight: h,
+		ItemMarginVert: mv, ItemMarginHoriz: mh}
 
 }
 
@@ -165,7 +170,8 @@ func restGalleryHandler(w http.ResponseWriter, r *http.Request) {
 	findToThumbnail(req.FirstRow, convChan)
 	wg.Wait()
 	htmlBody := getGalleryHTML(req.FirstRow)
-	rData := restData{GalleryContent: string(htmlBody)}
+	debounceR := int(math.Ceil(float64(*rows) / 2.0))
+	rData := restData{GalleryContent: string(htmlBody), DebounceRows: debounceR}
 
 	jBody, err := json.MarshalIndent(rData, "", "    ")
 	if err != nil {
@@ -187,7 +193,8 @@ func galleryHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func findToThumbnail(firstRow int, toConv chan<- *galleryImg) {
-	startIdx, endIdx := getMaskInds(firstRow, *prefetch+2)
+	// Pre-thumbnail two complete screens above and below
+	startIdx, endIdx := getMaskInds(firstRow, 2*(*rows))
 	for i := startIdx; i < endIdx; i++ {
 		if imgs[i].ThumbPath == "" {
 			wg.Add(1)
@@ -234,7 +241,7 @@ func main() {
 	}
 	go shutdown(sigChan, thumbDir)
 
-	chanSize := (2*(*prefetch) + *rows) * (*cols)
+	chanSize := 5 * (*rows) * (*cols)
 	convChan = make(chan *galleryImg, chanSize)
 	go findToThumbnail(0, convChan)
 	for i := 0; i < *numWorkers; i++ {
